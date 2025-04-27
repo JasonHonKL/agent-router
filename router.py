@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # DeepSeek API configuration
-DEEPSEEKAI_API_KEY = "YOUR-API-KEY"
+DEEPSEEKAI_API_KEY = "sk-75d877a9662b4079a6f7929ee11bbae7"
 DEEPSEEKAI_API_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
 
 class Message:
@@ -219,7 +219,6 @@ class CodingAgent(AgentRouter):
         
         logger.error("CodingAgent no valid code found in response")
         return {"error": "No valid code found", "raw_response": response}
-
 class CentralRouter:
     def __init__(self):
         self.agents = {}
@@ -247,34 +246,40 @@ class CentralRouter:
                 agent_responses[agent_name] = response
                 logger.debug(f"{agent_name} response: {response}")
         
-        # Second handshake: format and dispatch to willing agents
+        # Second handshake: dispatch to willing agents using their requested format
         logger.info("Starting second handshake with willing agents")
         for agent_name, response in agent_responses.items():
             if response["request"] is not None:
                 logger.info(f"Agent {agent_name} can handle the task")
                 
                 try:
+                    # Parse the agent's required input format
                     input_schema = json.loads(response["request"])
                     logger.debug(f"{agent_name} input schema: {input_schema}")
                     
-                    # For web search agent
-                    if agent_name == "Web Search Agent":
-                        formatted_input = {
-                            "query": content,
-                            "max_results": input_schema.get("max_results", 5)
-                        }
+                    # Create a formatted input following the agent's schema
+                    # We don't hardcode the structure beforehand - we follow what the agent tells us
+                    formatted_input = {}
                     
-                    # For coding agent
-                    elif agent_name == "Coding Agent":
-                        formatted_input = {
-                            "task": content,
-                            "language": "python",  # Default language
-                            "constraints": ""
-                        }
-                    else:
-                        # Generic formatting for other agent types
-                        formatted_input = {key: content if val == "[user content]" else val 
-                                          for key, val in input_schema.items()}
+                    # Look through the schema and replace placeholder values 
+                    for key, value in input_schema.items():
+                        # If we find a placeholder in brackets, replace it with content
+                        if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
+                            # Special case for search query
+                            if "query" in key.lower() or "search" in value.lower():
+                                formatted_input[key] = content
+                            # Special case for task description
+                            elif "task" in key.lower() or "description" in value.lower():
+                                formatted_input[key] = content
+                            # Default case for user content
+                            elif "content" in value.lower() or "user" in value.lower():
+                                formatted_input[key] = content
+                            # Keep the placeholder if we don't know how to replace it
+                            else:
+                                formatted_input[key] = value
+                        else:
+                            # Keep non-placeholder values as-is
+                            formatted_input[key] = value
                     
                     logger.info(f"Sending formatted input to {agent_name}: {formatted_input}")
                     
