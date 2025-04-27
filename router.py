@@ -219,6 +219,7 @@ class CodingAgent(AgentRouter):
         
         logger.error("CodingAgent no valid code found in response")
         return {"error": "No valid code found", "raw_response": response}
+
 class CentralRouter:
     def __init__(self):
         self.agents = {}
@@ -246,49 +247,47 @@ class CentralRouter:
                 agent_responses[agent_name] = response
                 logger.debug(f"{agent_name} response: {response}")
         
-        # Second handshake: dispatch to willing agents using their requested format
+        # Second handshake: dispatch to willing agents using LLM to format input
         logger.info("Starting second handshake with willing agents")
         for agent_name, response in agent_responses.items():
             if response["request"] is not None:
                 logger.info(f"Agent {agent_name} can handle the task")
                 
                 try:
-                    # Parse the agent's required input format
+                    # Get the agent's input schema
                     input_schema = json.loads(response["request"])
                     logger.debug(f"{agent_name} input schema: {input_schema}")
                     
-                    # Create a formatted input following the agent's schema
-                    # We don't hardcode the structure beforehand - we follow what the agent tells us
-                    formatted_input = {}
+                    # Use LLM to format the input according to schema
+                    formatting_prompt = f"""
+                    Given the following user request:
+                    "{content}"
                     
-                    # Look through the schema and replace placeholder values 
-                    for key, value in input_schema.items():
-                        # If we find a placeholder in brackets, replace it with content
-                        if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
-                            # Special case for search query
-                            if "query" in key.lower() or "search" in value.lower():
-                                formatted_input[key] = content
-                            # Special case for task description
-                            elif "task" in key.lower() or "description" in value.lower():
-                                formatted_input[key] = content
-                            # Default case for user content
-                            elif "content" in value.lower() or "user" in value.lower():
-                                formatted_input[key] = content
-                            # Keep the placeholder if we don't know how to replace it
-                            else:
-                                formatted_input[key] = value
-                        else:
-                            # Keep non-placeholder values as-is
-                            formatted_input[key] = value
+                    And this input schema for the {agent_name}:
+                    {json.dumps(input_schema, indent=2)}
                     
-                    logger.info(f"Sending formatted input to {agent_name}: {formatted_input}")
+                    Format the user request into a valid JSON object that matches the schema.
+                    Fill in all placeholders (text in square brackets) with appropriate values based on the user request.
+                    Only output the JSON object, nothing else.
+                    """
                     
-                    # Third handshake: send formatted task to agent
-                    agent_result = await self.agents[agent_name].process(formatted_input)
-                    results[agent_name] = agent_result
-                    logger.info(f"Received result from {agent_name}")
+                    # Call LLM to format input
+                    formatted_input_str = await self.agents[agent_name]._call_llm(formatting_prompt)
                     
-                except (json.JSONDecodeError, KeyError) as e:
+                    # Extract JSON from the response
+                    match = re.search(r'\{[\s\S]*\}', formatted_input_str)
+                    if match:
+                        formatted_input = json.loads(match.group(0))
+                        logger.info(f"Sending LLM-formatted input to {agent_name}: {formatted_input}")
+                        
+                        # Third handshake: send formatted task to agent
+                        agent_result = await self.agents[agent_name].process(formatted_input)
+                        results[agent_name] = agent_result
+                        logger.info(f"Received result from {agent_name}")
+                    else:
+                        raise ValueError("No valid JSON found in LLM response")
+                    
+                except (json.JSONDecodeError, ValueError) as e:
                     error_msg = f"Failed to format input for {agent_name}: {str(e)}"
                     logger.error(error_msg)
                     results[agent_name] = {"error": error_msg}
@@ -296,8 +295,7 @@ class CentralRouter:
                 logger.info(f"Agent {agent_name} cannot handle the task")
         
         logger.info(f"Broadcast completed with {len(results)} results")
-        return results
-
+        return results 
     async def handle_user_input(self, user_input: str) -> Dict[str, Any]:
         """Process user input and route to appropriate agents"""
         logger.info(f"Handling user input: {user_input[:50]}...")
@@ -334,7 +332,6 @@ class CentralRouter:
         
         logger.info(f"Completed processing with {len(all_results)} total results")
         return all_results
-
 async def main():
     # Initialize router and agents
     logger.info("Starting agent router system")
