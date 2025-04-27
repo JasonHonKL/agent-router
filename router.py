@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # DeepSeek API configuration
-DEEPSEEKAI_API_KEY = "sk-75d877a9662b4079a6f7929ee11bbae7"
+DEEPSEEKAI_API_KEY = "YOUR-API-KEY"
 DEEPSEEKAI_API_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
 
 class Message:
